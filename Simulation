@@ -1,0 +1,131 @@
+import numpy as np
+import matplotlib.pyplot as plt
+Length_1 = 0.5 #@param {type:"slider", min:0.5, max:2.0, step:0.1}
+Length_2 = 2 #@param {type:"slider", min:0.5, max:2.0, step:0.1}
+Mass_1 = 3   #@param {type:"slider", min:0.5, max:3.0, step:0.1}
+Mass_2 = 3   #@param {type:"slider", min:0.5, max:3.0, step:0.1}
+Gravity = 9.81
+Initial_Angle_deg = 178 #@param {type:"slider", min:30, max:178, step:1}
+Sim_Time_Seconds = 60   #@param {type:"slider", min:10, max:60, step:5}
+Amount_of_Trials = 100   #@param {type:"slider", min:10, max:100, step:10}
+Control_Tier = "Tier 2: Advanced Adaptive K*(t)" #@param ["Pure Chaos (K = 0)", "Tier 1: Foundational (Fixed K = 2.5)", "Tier 2: Advanced Adaptive K*(t)"]
+DT = 0.001
+N_STEPS = int(Sim_Time_Seconds / DT)
+time_arr = np.linspace(0, Sim_Time_Seconds, N_STEPS)
+NOISE_SIGMA = 1e-6 # Continuous microscopic thermal/quantum jitter
+def get_accelerations(th1, w1, th2, w2):
+    dth = th1 - th2
+    denom1 = (Mass_1 + Mass_2) * Length_1 - Mass_2 * Length_1 * np.cos(dth)**2
+    denom2 = (Length_2 / Length_1) * denom1
+    a1 = (Mass_2 * Gravity * np.sin(th2) * np.cos(dth)
+          - Mass_2 * np.sin(dth) * (Length_1 * w1**2 * np.cos(dth) + Length_2 * w2**2)
+          - (Mass_1 + Mass_2) * Gravity * np.sin(th1)) / denom1
+    a2 = ((Mass_1 + Mass_2) * (Length_1 * w1**2 * np.sin(dth) - Gravity * np.sin(th2) + Gravity * np.sin(th1) * np.cos(dth))
+          + Mass_2 * Length_2 * w2**2 * np.sin(dth) * np.cos(dth)) / denom2
+    return a1, a2
+def simulate_trial(mode, is_baseline=False):
+    th1 = np.zeros(N_STEPS)
+    th2 = np.zeros(N_STEPS)
+    w1  = np.zeros(N_STEPS)
+    w2  = np.zeros(N_STEPS)
+    rad0 = np.radians(Initial_Angle_deg)
+    th1[0], th2[0] = rad0, rad0
+    gain_history = np.zeros(N_STEPS)
+    for i in range(N_STEPS - 1):
+        a1, a2 = get_accelerations(th1[i], w1[i], th2[i], w2[i])
+        # Noise term
+        if not is_baseline:
+            n1 = NOISE_SIGMA * np.sqrt(DT) * np.random.randn()
+            n2 = NOISE_SIGMA * np.sqrt(DT) * np.random.randn()
+        else:
+            n1, n2 = 0.0, 0.0
+        f1, f2 = 0.0, 0.0
+        if not is_baseline:
+            dTh = np.hypot(th1[i] - ref_th1[i], th2[i] - ref_th2[i])
+            dW  = np.hypot(w1[i] - ref_w1[i], w2[i] - ref_w2[i])
+            if mode == "Tier 1: Foundational (Fixed K = 2.5)":
+                k_val = 2.5
+                f1 = -k_val * (w1[i] - ref_w1[i]) * DT - k_val * (th1[i] - ref_th1[i]) * DT
+                f2 = -k_val * (w2[i] - ref_w2[i]) * DT - k_val * (th2[i] - ref_th2[i]) * DT
+                gain_history[i] = k_val
+            elif mode == "Tier 2: Advanced Adaptive K*(t)":
+                # K*(t) adapts dynamically to delta X
+                k_val = min(10.0, 1.5 + dTh * 5.0 + dW * 0.8)
+                f1 = -k_val * (w1[i] - ref_w1[i]) * DT - k_val * (th1[i] - ref_th1[i]) * DT
+                f2 = -k_val * (w2[i] - ref_w2[i]) * DT - k_val * (th2[i] - ref_th2[i]) * DT
+                gain_history[i] = k_val
+        w1[i+1] = w1[i] + a1 * DT + n1 + f1
+        w2[i+1] = w2[i] + a2 * DT + n2 + f2
+        th1[i+1] = th1[i] + w1[i+1] * DT
+        th2[i+1] = th2[i] + w2[i+1] * DT
+    x2 = Length_1 * np.sin(th1) + Length_2 * np.sin(th2)
+    y2 = -Length_1 * np.cos(th1) - Length_2 * np.cos(th2)
+    return th1, th2, w1, w2, x2, y2, gain_history
+print(f"⏳ Simulating Baseline and {Amount_of_Trials} Parallel Stochastic Realities...")
+ref_th1, ref_th2, ref_w1, ref_w2, ref_x2, ref_y2, _ = simulate_trial(Control_Tier, is_baseline=True)
+all_th2 = []
+final_x, final_y = [], []
+all_gains = []
+np.random.seed(42)
+for r in range(Amount_of_Trials):
+    _, th2_r, _, _, x2_r, y2_r, k_hist = simulate_trial(Control_Tier, is_baseline=False)
+    all_th2.append(th2_r)
+    final_x.append(x2_r[-1])
+    final_y.append(y2_r[-1])
+    all_gains.append(k_hist)
+plt.figure(figsize=(16, 10))
+plt.subplot(2, 2, 1)
+for i in range(Amount_of_Trials):
+    plt.plot(time_arr, all_th2[i], color='teal', alpha=0.18, lw=1)
+plt.plot(time_arr, ref_th2, color='crimson', lw=2.5, label="Deterministic Ideal (Target)")
+plt.title(f"Timeline Trajectories ({Control_Tier})", fontsize=12, fontweight='bold')
+plt.xlabel("Time (seconds)")
+plt.ylabel(r"Angle $\theta_2$ (radians)")
+plt.xlim(0, Sim_Time_Seconds)
+plt.legend()
+plt.grid(True)
+plt.subplot(2, 2, 2)
+std_dev = np.std(np.array(all_th2), axis=0)
+plt.plot(time_arr, std_dev, color='purple', lw=2.2, label=r"Phase Space Dispersion ($\sigma_\theta$)")
+plt.title("Statistical Uncertainty Growth Across Realities", fontsize=12, fontweight='bold')
+plt.xlabel("Time (seconds)")
+plt.ylabel(r"Standard Deviation $\sigma_\theta$ (log scale)")
+plt.yscale('log')
+plt.xlim(0, Sim_Time_Seconds)
+plt.legend()
+plt.grid(True, which="both", ls="--")
+plt.subplot(2, 2, 3)
+if Control_Tier == "Tier 2: Advanced Adaptive K*(t)":
+    mean_gain = np.mean(np.array(all_gains), axis=0)
+    plt.plot(time_arr, mean_gain, color='#10b981', lw=2.2, label=r"Mean Adaptive Gain $K^*(t)$")
+    plt.axhline(y=1.5, color='gray', linestyle=':', label="Base Resting Gain")
+    plt.title(r"Tier 2 Telemetry: Adaptive Gain $K^*(t)$ Spikes at Critical Forks", fontsize=12, fontweight='bold')
+    plt.ylabel(r"Feedback Gain $K^*(t)$")
+elif Control_Tier == "Tier 1: Foundational (Fixed K = 2.5)":
+    plt.axhline(y=2.5, color='#f59e0b', lw=2.5, label="Fixed Gain (K = 2.5)")
+    plt.title("Tier 1 Telemetry: Constant Damping & Spring Stiffness", fontsize=12, fontweight='bold')
+    plt.ylabel("Static Gain K")
+else:
+    plt.axhline(y=0.0, color='crimson', lw=2.5, label="No Control (K = 0)")
+    plt.title("Uncontrolled Telemetry: Pure Chaos Mode", fontsize=12, fontweight='bold')
+    plt.ylabel("Gain K = 0")
+plt.xlabel("Time (seconds)")
+plt.xlim(0, Sim_Time_Seconds)
+plt.legend()
+plt.grid(True)
+plt.subplot(2, 2, 4)
+max_r = (Length_1 + Length_2) * 1.15
+plt.scatter(final_x, final_y, color='teal', s=70, alpha=0.75, edgecolors='black', label="Stochastic End States")
+plt.scatter(ref_x2[-1], ref_y2[-1], color='crimson', s=160, marker='*', label="Target State")
+circle = plt.Circle((0, 0), Length_1 + Length_2, color='gray', fill=False, linestyle='--', lw=1.5, label="Physical Boundary")
+plt.gca().add_patch(circle)
+plt.title(f"Macroscopic End States at T = {Sim_Time_Seconds}s", fontsize=12, fontweight='bold')
+plt.xlabel("X Position (meters)")
+plt.ylabel("Y Position (meters)")
+plt.xlim(-max_r, max_r)
+plt.ylim(-max_r, max_r)
+plt.gca().set_aspect('equal', adjustable='box')
+plt.legend(loc='upper right')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
