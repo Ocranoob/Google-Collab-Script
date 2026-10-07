@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wind Turbine Chaos Control Visualizer</title>
+<script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+<style>
+  body { background-color: rgb(3, 7, 18); font-family: system-ui, -apple-system, sans-serif; }
+  canvas { display: block; background-color: rgb(15, 23, 42); border-radius: 8px; }
+  .bar-track { background-color: rgb(30, 41, 59); border-radius: 6px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; transition: width 0.06s linear; }
+  .btn-active { background-color: rgb(79, 70, 229); color: rgb(255, 255, 255); }
+  .btn-inactive { background-color: transparent; color: rgb(156, 163, 175); }
+  .btn-active:hover { background-color: rgb(67, 56, 202); }
+  .btn-inactive:hover { background-color: rgb(31, 41, 55); }
+</style>
+</head>
+<body class="text-white select-none min-h-screen flex flex-col">
+
+<!-- HEADER BAR -->
+<div class="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-slate-800">
+  <div>
+    <div class="text-base font-bold tracking-tight">Wind Turbine Chaos Control Visualizer</div>
+    <div class="text-xs text-slate-400">Comparing Reference (Blue) vs Divergent Twin (Orange)</div>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-4">
+    <!-- View Mode Switch -->
+    <div class="flex items-center gap-2 text-xs text-slate-400">
+      <span>View:</span>
+      <div class="flex border border-slate-700 rounded overflow-hidden text-xs font-medium">
+        <button id="v-turb" onclick="setView('turbine')" class="px-3 py-1 btn-active transition-colors">Wind Turbine</button>
+        <button id="v-pend" onclick="setView('pendulum')" class="px-3 py-1 btn-inactive transition-colors">Pendulum</button>
+      </div>
+    </div>
+
+    <!-- Jitter Mode Switch -->
+    <div class="flex items-center gap-2 text-xs text-slate-400">
+      <span>Jitter:</span>
+      <div class="flex border border-slate-700 rounded overflow-hidden text-xs font-medium">
+        <button id="j-ct" onclick="setJitter('continuous')" class="px-3 py-1 btn-active transition-colors">Continuous Noise (Wind Gusts)</button>
+        <button id="j-ot" onclick="setJitter('onetime')" class="px-3 py-1 btn-inactive transition-colors">One-Time Offset (1e-14)</button>
+      </div>
+    </div>
+
+    <!-- Playback Controls -->
+    <div class="flex gap-2">
+      <button id="btn-play" onclick="togglePlay()"
+        class="px-4 py-1.5 rounded text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 transition-colors">
+        Start
+      </button>
+      <button onclick="resetAll()"
+        class="px-4 py-1.5 rounded text-xs font-semibold bg-slate-700 hover:bg-slate-600 transition-colors">
+        Reset
+      </button>
+    </div>
+  </div>
+
+  <!-- Timer Display -->
+  <div class="text-right">
+    <div class="text-2xl font-mono font-bold" id="t-display">0.00s</div>
+    <div class="text-xs text-slate-500">simulation time</div>
+  </div>
+</div>
+
+<!-- 3 COMPARISON PANELS -->
+<div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3 p-3">
+
+  <!-- Panel 1: K = 0 -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col gap-2">
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="text-sm font-bold text-red-400">Tier 0: K = 0</div>
+        <div class="text-xs text-slate-400">Uncontrolled Aeroelastic Flutter</div>
+      </div>
+      <span id="badge0" class="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-400">Waiting</span>
+    </div>
+    <canvas id="c0" height="240"></canvas>
+    <div class="space-y-1">
+      <div class="flex justify-between text-xs text-slate-400">
+        <span>Divergence dX</span>
+        <span id="dx0" class="font-mono text-red-300">0.00000</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bg-red-600" id="dxbar0" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Panel 2: K = 2.5 -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col gap-2">
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="text-sm font-bold text-yellow-400">Tier 1: K = 2.5</div>
+        <div class="text-xs text-slate-400">Static Pitch Damping</div>
+      </div>
+      <span id="badge1" class="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-400">Waiting</span>
+    </div>
+    <canvas id="c1" height="240"></canvas>
+    <div class="space-y-1">
+      <div class="flex justify-between text-xs text-slate-400">
+        <span>Divergence dX</span>
+        <span id="dx1" class="font-mono text-yellow-300">0.00000</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bg-yellow-500" id="dxbar1" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Panel 3: K*(t) Dynamic -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col gap-2">
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="text-sm font-bold text-emerald-400">Tier 2: Adaptive K*(t)</div>
+        <div class="text-xs text-slate-400">Dynamic Aeroelastic Controller</div>
+      </div>
+      <span id="badge2" class="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-400">Waiting</span>
+    </div>
+    <canvas id="c2" height="240"></canvas>
+    <div class="space-y-1">
+      <div class="flex justify-between text-xs text-slate-400">
+        <span>Divergence dX</span>
+        <span id="dx2" class="font-mono text-emerald-300">0.00000</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bg-emerald-600" id="dxbar2" style="width:0%"></div></div>
+      <div class="flex justify-between text-xs text-slate-400 pt-0.5">
+        <span>Gain K*(t) Telemetry</span>
+        <span id="kval" class="font-mono text-sky-300">0.00</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill bg-sky-600" id="kbar" style="width:0%"></div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- FOOTER EXPLANATION -->
+<div id="footer-info" class="text-center pb-3 text-xs text-slate-400 px-4">
+  Wind Turbine Scaling: Spinning Rotor Blades (12 RPM) + Aeroelastic Blade Flex + Tower Sway Damping
+</div>
+
+<script>
+// Physics & Simulation Constants
+const G = 9.81;
+const L1 = 1.0;
+const L2 = 0.75;
+const M1 = 1.0;
+const M2 = 1.0;
+const DT = 0.016;
+
+// Noise scale
+const SIG_PEND = 1e-6;
+const SIG_TURB = 0.02;
+
+const TRAIL_LIMIT = 90;
+const DX_MAX = 0.50; // Scaled to realistic micro-deflection ranges
+const K_STATIC = 2.5;
+const DEADBAND = 1e-5;
+const K_BASE = 2.5;
+const K_MAX = 20.0;
+
+// Initial conditions: realistic small angles for turbine
+const INIT_TURB = [0.03, 0.02, 0.0, 0.0];
+const INIT_PEND = [1.50, 0.80, 0.0, 0.0];
+
+// State variables
+let viewMode = 'turbine';
+let jitterMode = 'continuous';
+let running = false;
+let simT = 0;
+let raf = null;
+let lastTs = null;
+let acc = 0;
+let windAnim = 0;
+let panels = [];
+
+function getInitialState() {
+  return viewMode === 'turbine' ? INIT_TURB : INIT_PEND;
+}
+
+function createPanels() {
+  const init = getInitialState();
+  return [0, 1, 2].map(function() {
+    return {
+      ref: [init[0], init[1], init[2], init[3]],
+      twin: jitterMode === 'onetime'
+        ? [init[0] + PERTURB, init[1] + PERTURB, init[2], init[3]]
+        : [init[0], init[1], init[2], init[3]],
+      refTrail: [],
+      twinTrail: [],
+      kstar: 0
+    };
+  });
+}
+
+// RK4 Integrator for Structural Dynamics
+function derivatives(t1, t2, w1, w2) {
+  if (viewMode === 'turbine') {
+    // Inverted tower stiffness + aeroelastic blade damping (realistic micro-sway ~1-4 degrees)
+    const K_tower = 35.0; // High stiffness restoring tower upright
+    const K_blade = 45.0; // Blade stiffness
+
+    const aeroThrust = 1.2 * Math.sin(simT * 1.5);
+
+    const a1 = (G * Math.sin(t1) - K_tower * t1 + aeroThrust - 1.2 * w1) / L1;
+    const a2 = (-G * Math.sin(t2) - K_blade * (t2 - t1) - 1.5 * w2 + 0.5 * a1) / L2;
+
+    return [w1, w2, a1, a2];
+  } else {
+    // Standard hanging double pendulum physics
+    const d = 2 * M1 + M2 - M2 * Math.cos(2 * t1 - 2 * t2);
+    const a1 = (-G * (2 * M1 + M2) * Math.sin(t1)
+                - M2 * G * Math.sin(t1 - 2 * t2)
+                - 2 * Math.sin(t1 - t2) * M2 * (w2 * w2 * L2 + w1 * w1 * L1 * Math.cos(t1 - t2)))
+               / (L1 * d);
+    const a2 = (2 * Math.sin(t1 - t2) * (w1 * w1 * L1 * (M1 + M2)
+                + G * (M1 + M2) * Math.cos(t1)
+                + w2 * w2 * L2 * M2 * Math.cos(t1 - t2)))
+               / (L2 * d);
+    return [w1, w2, a1, a2];
+  }
+}
+
+function rk4Step(s, dt) {
+  const k1 = derivatives(s[0], s[1], s[2], s[3]);
+  const k2 = derivatives(s[0] + k1[0] * dt / 2, s[1] + k1[1] * dt / 2, s[2] + k1[2] * dt / 2, s[3] + k1[3] * dt / 2);
+  const k3 = derivatives(s[0] + k2[0] * dt / 2, s[1] + k2[1] * dt / 2, s[2] + k2[2] * dt / 2, s[3] + k2[3] * dt / 2);
+  const k4 = derivatives(s[0] + k3[0] * dt, s[1] + k3[1] * dt, s[2] + k3[2] * dt, s[3] + k3[3] * dt);
+  return [
+    s[0] + dt * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) / 6,
+    s[1] + dt * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) / 6,
+    s[2] + dt * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]) / 6,
+    s[3] + dt * (k1[3] + 2 * k2[3] + 2 * k3[3] + k4[3]) / 6
+  ];
+}
+
+function normalRandom() {
+  return Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
+}
+
+function applyFeedbackControl(twin, ref, K) {
+  if (K === 0) return twin;
+  const dt = DT;
+  const errAngleTower = twin[0] - ref[0];
+  const errAngleBlade = twin[1] - ref[1];
+  const errSpeedTower = twin[2] - ref[2];
+  const errSpeedBlade = twin[3] - ref[3];
+  return [
+    twin[0],
+    twin[1],
+    twin[2] - K * (errSpeedTower * 2.0 + errAngleTower * 8.0) * dt,
+    twin[3] - K * (errSpeedBlade * 2.0 + errAngleBlade * 8.0) * dt
+  ];
+}
+
+function computeAdaptiveGain(twin, ref) {
+  const dTheta = Math.abs(twin[0] - ref[0]) + Math.abs(twin[1] - ref[1]);
+  const dOmega = Math.abs(twin[2] - ref[2]) + Math.abs(twin[3] - ref[3]);
+  const totalErr = dTheta + dOmega;
+  if (totalErr < DEADBAND) return 0;
+  return Math.min(K_MAX, K_BASE + dTheta * 60.0 + dOmega * 12.0);
+}
+
+// Canvas Initialization
+const canvasIds = ['c0', 'c1', 'c2'];
+const canvases = canvasIds.map(function(id) { return document.getElementById(id); });
+const contexts = canvases.map(function(c) { return c.getContext('2d'); });
+
+function resizeCanvases() {
+  canvases.forEach(function(c) {
+    const parentWidth = c.parentElement.clientWidth - 24;
+    c.width = Math.max(parentWidth, 100);
+  });
+}
+
+// Coordinates Calculation
+function getPendulumCoords(canvas, t1, t2) {
+  const cx = canvas.width / 2;
+  const cy = Math.min(48, canvas.height * 0.18);
+  const scale = Math.min(canvas.width, canvas.height) * 0.36;
+  const x1 = cx + scale * L1 * Math.sin(t1);
+  const y1 = cy + scale * L1 * Math.cos(t1);
+  const x2 = x1 + scale * L2 * Math.sin(t2);
+  const y2 = y1 + scale * L2 * Math.cos(t2);
+  return { cx: cx, cy: cy, x1: x1, y1: y1, x2: x2, y2: y2 };
+}
+
+function getTurbineCoords(canvas, t1, t2) {
+  const bx = canvas.width / 2;
+  const by = canvas.height - 30;
+  const scale = Math.min(canvas.width, canvas.height) * 0.38;
+  const visGain = 3.5;
+  const hx = bx + scale * L1 * Math.sin(t1 * visGain);
+  const hy = by - scale * L1 * Math.cos(t1 * visGain);
+  const tx = hx + scale * L2 * Math.sin(t2 * visGain);
+  const ty = hy - scale * L2 * Math.cos(t2 * visGain);
+  return { bx: bx, by: by, hx: hx, hy: hy, tx: tx, ty: ty, towerAngle: t1 * visGain, flexAngle: t2 * visGain };
+}
+
+// Rendering Functions
+function drawPendulum(ctx, canvas, state, colorString, alpha) {
+  const coords = getPendulumCoords(canvas, state[0], state[1]);
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = colorString;
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(coords.cx, coords.cy);
+  ctx.lineTo(coords.x1, coords.y1);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(coords.x1, coords.y1);
+  ctx.lineTo(coords.x2, coords.y2);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgb(71, 85, 105)';
+  ctx.beginPath();
+  ctx.arc(coords.cx, coords.cy, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = colorString;
+  ctx.beginPath();
+  ctx.arc(coords.x1, coords.y1, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(coords.x2, coords.y2, 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 1.0;
+}
+
+function drawTurbine(ctx, canvas, state, colorString, alpha) {
+  const coords = getTurbineCoords(canvas, state[0], state[1]);
+  ctx.globalAlpha = alpha;
+
+  // Foundation
+  ctx.fillStyle = 'rgb(55, 65, 81)';
+  ctx.beginPath();
+  ctx.ellipse(coords.bx, coords.by + 5, 16, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tower Structure
+  const perpAngle = coords.towerAngle - Math.PI / 2;
+  const baseWidth = 7;
+  const topWidth = 3.5;
+  const pxB = Math.cos(perpAngle);
+  const pyB = Math.sin(perpAngle);
+
+  ctx.fillStyle = 'rgb(71, 85, 105)';
+  ctx.beginPath();
+  ctx.moveTo(coords.bx - pxB * baseWidth, coords.by - pyB * baseWidth);
+  ctx.lineTo(coords.bx + pxB * baseWidth, coords.by + pyB * baseWidth);
+  ctx.lineTo(coords.hx + pxB * topWidth, coords.hy + pyB * topWidth);
+  ctx.lineTo(coords.hx - pxB * topWidth, coords.hy - pyB * topWidth);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgb(100, 116, 139)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Nacelle Box
+  ctx.save();
+  ctx.translate(coords.hx, coords.hy);
+  ctx.rotate(coords.towerAngle);
+  ctx.fillStyle = colorString === 'rgb(59, 130, 246)' ? 'rgb(30, 58, 95)' : 'rgb(124, 45, 18)';
+  ctx.fillRect(-11, -5, 22, 10);
+  ctx.strokeStyle = colorString;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-11, -5, 22, 10);
+  ctx.restore();
+
+  // Spinning Rotor Hub & 3 Aeroelastic Blades
+  // Continuous rotation angle phi = 1.25 rad/sec (~12 RPM)
+  const rotorSpeed = 1.25;
+  const rotorAngle = simT * rotorSpeed;
+  const bladeRadius = Math.min(canvas.width, canvas.height) * 0.38 * L2;
+  const flexOffset = (coords.flexAngle - coords.towerAngle); // aeroelastic flex deflection angle
+
+  for (let b = 0; b < 3; b++) {
+    const ang = rotorAngle + (b * Math.PI * 2 / 3);
+    const flexAng = ang + flexOffset; // blade flexes under aeroelastic force
+
+    const bxEnd = coords.hx + bladeRadius * Math.sin(flexAng);
+    const byEnd = coords.hy - bladeRadius * Math.cos(flexAng);
+
+    ctx.strokeStyle = colorString;
+    ctx.lineWidth = 3.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(coords.hx, coords.hy);
+    ctx.lineTo(bxEnd, byEnd);
+    ctx.stroke();
+
+    // Blade tip node
+    ctx.fillStyle = colorString;
+    ctx.beginPath();
+    ctx.arc(bxEnd, byEnd, 3.0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Hub Center Circle
+  ctx.fillStyle = colorString;
+  ctx.beginPath();
+  ctx.arc(coords.hx, coords.hy, 5.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 1.0;
+}
+
+function drawWindStreamlines(ctx, canvas) {
+  ctx.globalAlpha = 0.22;
+  ctx.strokeStyle = 'rgb(147, 197, 253)';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  const rows = 5;
+  for (let i = 0; i < rows; i++) {
+    const y = canvas.height * 0.15 + i * (canvas.height * 0.65) / Math.max(rows - 1, 1);
+    const phase = ((windAnim * 35 + i * 55) % (canvas.width + 60)) - 30;
+    ctx.beginPath();
+    ctx.moveTo(phase - 18, y);
+    ctx.lineTo(phase + 10, y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(phase + 5, y - 4);
+    ctx.lineTo(phase + 10, y);
+    ctx.lineTo(phase + 5, y + 4);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1.0;
+}
+
+function drawOceanBackground(ctx, canvas) {
+  ctx.fillStyle = 'rgb(12, 26, 46)';
+  ctx.fillRect(0, canvas.height - 24, canvas.width, 24);
+
+  ctx.strokeStyle = 'rgb(30, 64, 175)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let x = 0; x <= canvas.width; x += 4) {
+    const y = canvas.height - 24 + Math.sin((x + windAnim * 15) * 0.08) * 2;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgb(30, 58, 95)';
+  ctx.font = '9px system-ui';
+  ctx.fillText('sea level', 4, canvas.height - 8);
+}
+
+function drawTrail(ctx, trailArray, colorString) {
+  if (trailArray.length < 2) return;
+  for (let i = 1; i < trailArray.length; i++) {
+    ctx.globalAlpha = (i / trailArray.length) * 0.40;
+    ctx.strokeStyle = colorString;
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(trailArray[i - 1][0], trailArray[i - 1][1]);
+    ctx.lineTo(trailArray[i][0], trailArray[i][1]);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1.0;
+}
+
+function drawDivergenceLine(ctx, canvas, refState, twinState) {
+  let rp, tp;
+  if (viewMode === 'pendulum') {
+    const r = getPendulumCoords(canvas, refState[0], refState[1]);
+    const t = getPendulumCoords(canvas, twinState[0], twinState[1]);
+    rp = [r.x2, r.y2];
+    tp = [t.x2, t.y2];
+  } else {
+    const r = getTurbineCoords(canvas, refState[0], refState[1]);
+    const t = getTurbineCoords(canvas, twinState[0], twinState[1]);
+    rp = [r.tx, r.ty];
+    tp = [t.tx, t.ty];
+  }
+
+  const dist = Math.hypot(rp[0] - tp[0], rp[1] - tp[1]);
+  if (dist < 2) return;
+
+  ctx.globalAlpha = Math.min(0.85, dist / 20);
+  ctx.strokeStyle = 'rgb(250, 204, 21)';
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(rp[0], rp[1]);
+  ctx.lineTo(tp[0], tp[1]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1.0;
+}
+
+function getTipPos(canvas, state) {
+  if (viewMode === 'pendulum') {
+    const p = getPendulumCoords(canvas, state[0], state[1]);
+    return [p.x2, p.y2];
+  } else {
+    const t = getTurbineCoords(canvas, state[0], state[1]);
+    return [t.tx, t.ty];
+  }
+}
+
+// Panel Render Loop
+function renderPanel(idx) {
+  const ctx = contexts[idx];
+  const c = canvases[idx];
+  const p = panels[idx];
+
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.fillStyle = 'rgb(15, 23, 42)';
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  if (viewMode === 'turbine') {
+    drawOceanBackground(ctx, c);
+    drawWindStreamlines(ctx, c);
+    drawTrail(ctx, p.refTrail, 'rgb(59, 130, 246)');
+    drawTrail(ctx, p.twinTrail, 'rgb(249, 115, 22)');
+    drawDivergenceLine(ctx, c, p.ref, p.twin);
+    drawTurbine(ctx, c, p.ref, 'rgb(59, 130, 246)', 1.0);
+    drawTurbine(ctx, c, p.twin, 'rgb(249, 115, 22)', 0.85);
+  } else {
+    const coords = getPendulumCoords(c, 0, 0);
+    ctx.globalAlpha = 0.08;
+    ctx.strokeStyle = 'rgb(148, 163, 184)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 8]);
+    ctx.beginPath();
+    ctx.moveTo(0, coords.cy);
+    ctx.lineTo(c.width, coords.cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1.0;
+
+    drawTrail(ctx, p.refTrail, 'rgb(59, 130, 246)');
+    drawTrail(ctx, p.twinTrail, 'rgb(249, 115, 22)');
+    drawDivergenceLine(ctx, c, p.ref, p.twin);
+    drawPendulum(ctx, c, p.ref, 'rgb(59, 130, 246)', 1.0);
+    drawPendulum(ctx, c, p.twin, 'rgb(249, 115, 22)', 0.88);
+  }
+}
+
+// HUD Updates
+function updateBadge(element, statusClass, text) {
+  element.className = 'text-xs font-semibold px-2 py-0.5 rounded ' + statusClass;
+  element.textContent = text;
+}
+
+function updateHUD() {
+  document.getElementById('t-display').textContent = simT.toFixed(2) + 's';
+
+  panels.forEach(function(p, i) {
+    const dTheta = Math.abs(p.ref[0] - p.twin[0]) + Math.abs(p.ref[1] - p.twin[1]);
+    const dOmega = Math.abs(p.ref[2] - p.twin[2]) + Math.abs(p.ref[3] - p.twin[3]);
+    const totalErr = dTheta + dOmega * 0.2;
+
+    document.getElementById('dx' + i).textContent = totalErr.toFixed(5);
+    const fillPct = Math.min(100, (totalErr / DX_MAX) * 100).toFixed(1);
+    document.getElementById('dxbar' + i).style.width = fillPct + '%';
+
+    const b = document.getElementById('badge' + i);
+    if (!running) {
+      updateBadge(b, 'bg-slate-800 text-slate-400', 'Waiting');
+    } else if (totalErr < 0.01) {
+      updateBadge(b, 'bg-emerald-950 text-emerald-400', 'Synced');
+    } else if (totalErr < 0.15) {
+      updateBadge(b, 'bg-yellow-950 text-yellow-400', 'Drifting');
+    } else {
+      updateBadge(b, 'bg-red-950 text-red-400', 'Diverged');
+    }
+
+    if (i === 2) {
+      document.getElementById('kval').textContent = p.kstar.toFixed(2);
+      const kPct = ((p.kstar / K_MAX) * 100).toFixed(1);
+      document.getElementById('kbar').style.width = kPct + '%';
+    }
+  });
+}
+
+// Physics Step
+function simStep() {
+  const sqdt = Math.sqrt(DT);
+  windAnim += DT;
+  const noiseScale = viewMode === 'turbine' ? SIG_TURB : SIG_PEND;
+
+  panels.forEach(function(p, idx) {
+    p.ref = rk4Step(p.ref, DT);
+    let twinNext = rk4Step(p.twin, DT);
+
+    if (jitterMode === 'continuous') {
+      twinNext[2] += noiseScale * sqdt * normalRandom();
+      twinNext[3] += noiseScale * sqdt * normalRandom();
+    }
+
+    if (idx === 1) {
+      twinNext = applyFeedbackControl(twinNext, p.ref, K_STATIC);
+    } else if (idx === 2) {
+      const K = computeAdaptiveGain(twinNext, p.ref);
+      p.kstar = K;
+      twinNext = applyFeedbackControl(twinNext, p.ref, K);
+    }
+    p.twin = twinNext;
+
+    const c = canvases[idx];
+    p.refTrail.push(getTipPos(c, p.ref));
+    p.twinTrail.push(getTipPos(c, p.twin));
+
+    if (p.refTrail.length > TRAIL_LIMIT) {
+      p.refTrail.shift();
+      p.twinTrail.shift();
+    }
+  });
+
+  simT += DT;
+}
+
+// Animation Loop
+function animationLoop(timestamp) {
+  if (!running) return;
+
+  if (lastTs !== null) {
+    const elapsed = Math.min((timestamp - lastTs) / 1000, 0.1);
+    acc += elapsed;
+    while (acc >= DT) {
+      simStep();
+      acc -= DT;
+    }
+  }
+
+  lastTs = timestamp;
+  [0, 1, 2].forEach(renderPanel);
+  updateHUD();
+  raf = requestAnimationFrame(animationLoop);
+}
+
+// Interactive Controls
+function setView(v) {
+  viewMode = v;
+  document.getElementById('v-turb').className = 'px-3 py-1 transition-colors ' + (v === 'turbine' ? 'btn-active' : 'btn-inactive');
+  document.getElementById('v-pend').className = 'px-3 py-1 transition-colors ' + (v === 'pendulum' ? 'btn-active' : 'btn-inactive');
+
+  const infoText = v === 'turbine'
+    ? 'Wind Turbine Scaling: Spinning Rotor Blades (12 RPM) + Aeroelastic Blade Flex + Tower Sway Damping'
+    : 'Double Pendulum Mode: Arm 1 (Upper) + Arm 2 (Lower) with RK4 Integration';
+  document.getElementById('footer-info').textContent = infoText;
+
+  resetAll();
+}
+
+function setJitter(j) {
+  jitterMode = j;
+  document.getElementById('j-ct').className = 'px-3 py-1 transition-colors ' + (j === 'continuous' ? 'btn-active' : 'btn-inactive');
+  document.getElementById('j-ot').className = 'px-3 py-1 transition-colors ' + (j === 'onetime' ? 'btn-active' : 'btn-inactive');
+  resetAll();
+}
+
+function togglePlay() {
+  if (!running) {
+    running = true;
+    lastTs = null;
+    acc = 0;
+    const pBtn = document.getElementById('btn-play');
+    pBtn.textContent = 'Pause';
+    pBtn.className = 'px-4 py-1.5 rounded text-xs font-semibold bg-yellow-700 hover:bg-yellow-600 transition-colors';
+    raf = requestAnimationFrame(animationLoop);
+  } else {
+    running = false;
+    const pBtn = document.getElementById('btn-play');
+    pBtn.textContent = 'Start';
+    pBtn.className = 'px-4 py-1.5 rounded text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 transition-colors';
+    if (raf) cancelAnimationFrame(raf);
+  }
+}
+
+function resetAll() {
+  running = false;
+  if (raf) cancelAnimationFrame(raf);
+
+  const pBtn = document.getElementById('btn-play');
+  pBtn.textContent = 'Start';
+  pBtn.className = 'px-4 py-1.5 rounded text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 transition-colors';
+
+  simT = 0;
+  windAnim = 0;
+  panels = createPanels();
+  resizeCanvases();
+
+  [0, 1, 2].forEach(renderPanel);
+  updateHUD();
+
+  document.getElementById('t-display').textContent = '0.00s';
+  ['badge0', 'badge1', 'badge2'].forEach(function(id) {
+    updateBadge(document.getElementById(id), 'bg-slate-800 text-slate-400', 'Waiting');
+  });
+}
+
+// Initial Setup
+window.addEventListener('load', function() {
+  resizeCanvases();
+  resetAll();
+});
+
+window.addEventListener('resize', function() {
+  resizeCanvases();
+  if (!running) [0, 1, 2].forEach(renderPanel);
+});
+</script>
+</body>
+</html>
